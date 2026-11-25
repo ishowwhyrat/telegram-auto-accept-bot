@@ -20,14 +20,22 @@ def telegram(method, data=None):
         json=data or {},
         timeout=20
     )
-    response.raise_for_status()
-    result = response.json()
 
-    if not result.get("ok"):
-        raise RuntimeError(result.get("description", "Telegram API error"))
+    try:
+        result = response.json()
+    except ValueError:
+        raise RuntimeError(
+            f"Telegram returned HTTP {response.status_code}: "
+            f"{response.text[:500]}"
+        )
+
+    if not response.ok or not result.get("ok"):
+        raise RuntimeError(
+            f"Telegram API error ({response.status_code}): "
+            f"{result.get('description', response.text[:500])}"
+        )
 
     return result.get("result")
-
 
 def send_message(chat_id, message):
     telegram("sendMessage", {
