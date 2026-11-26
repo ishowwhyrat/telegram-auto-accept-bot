@@ -77,11 +77,13 @@ def webhook():
 
             try:
                 send_message(
-                    user_chat_id,
-                    f"I have successfully approved your request "
-                    f"to join {channel_name}. 🎉\n\n"
-                    "Welcome! Thank you for joining."
-                )
+    user_chat_id,
+    f"I have successfully approved your request "
+    f"to join {channel_name}. 🎉\n\n"
+    "Welcome! Thank you for joining.\n\n"
+    "📢 Join our WhatsApp Channel for more updates:\n"
+    "👉 https://whatsapp.com/channel/0029VahpPcv1Hsq6t1DOMO1O"
+)
 
                 logging.info(
                     "Approval DM sent to user %s", user_id
