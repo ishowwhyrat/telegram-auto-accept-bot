@@ -73,17 +73,23 @@ def webhook():
         redis.incr("total_requests")
 
         # STEP 1: Attempt DM before approval
-        if user_chat_id:
+         if user_chat_id:
+
+            user_info = join_request.get("from", {})
+            first_name = user_info.get("first_name", "there")
+            last_name = user_info.get("last_name", "")
+            user_name = f"{first_name} {last_name}".strip()
 
             try:
                 send_message(
-    user_chat_id,
-    f"I have successfully approved your request "
-    f"to join {channel_name}. 🎉\n\n"
-    "Welcome! Thank you for joining.\n\n"
-    "📢 Join our WhatsApp Channel for more updates:\n"
-    "👉 https://whatsapp.com/channel/0029VahpPcv1Hsq6t1DOMO1O"
-)
+                    user_chat_id,
+                    f"🎉 Welcome, {user_name}!\n\n"
+                    f"Your request to join {channel_name} has been approved!\n\n"
+                    "📢 Important: Please join our backup channel to stay "
+                    "connected in case of any issues:\n\n"
+                    "👇 Click below to join:\n"
+                    "https://whatsapp.com/channel/0029VahpPcv1Hsq6t1DOMO1O"
+                )
 
                 logging.info(
                     "Approval DM sent to user %s", user_id
