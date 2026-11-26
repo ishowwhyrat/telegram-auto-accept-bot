@@ -73,7 +73,7 @@ def webhook():
         redis.incr("total_requests")
 
         # STEP 1: Attempt DM before approval
-         if user_chat_id:
+        if user_chat_id:
 
             user_info = join_request.get("from", {})
             first_name = user_info.get("first_name", "there")
@@ -118,6 +118,8 @@ def webhook():
             logging.info(
                 "Successfully approved user %s", user_id
             )
+
+            return jsonify({"ok": True, "approved": True}), 200
 
         except Exception as e:
 
