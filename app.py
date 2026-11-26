@@ -1,7 +1,7 @@
 import os
 import logging
-import requests
 from flask import Flask, request, jsonify
+from upstash_redis import Redis
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -9,33 +9,29 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 PUBLIC_URL = os.environ["PUBLIC_URL"].rstrip("/")
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 WEBHOOK_PATH = f"/telegram/{WEBHOOK_SECRET}"
 
+redis = Redis.from_env()
+
 
 def telegram(method, data=None):
+    import requests
+
     response = requests.post(
         f"{API}/{method}",
         json=data or {},
         timeout=20
     )
-
-    try:
-        result = response.json()
-    except ValueError:
-        raise RuntimeError(
-            f"Telegram returned HTTP {response.status_code}: "
-            f"{response.text[:500]}"
-        )
+    result = response.json()
 
     if not response.ok or not result.get("ok"):
-        raise RuntimeError(
-            f"Telegram API error ({response.status_code}): "
-            f"{result.get('description', response.text[:500])}"
-        )
+        raise RuntimeError(result.get("description", "Telegram API error"))
 
     return result.get("result")
+
 
 def send_message(chat_id, message):
     telegram("sendMessage", {
@@ -46,7 +42,7 @@ def send_message(chat_id, message):
 
 @app.get("/")
 def home():
-    return "Auto Join Request Bot is running!"
+    return "ReqFlowAcceptBot is running!"
 
 
 @app.post(WEBHOOK_PATH)
@@ -58,60 +54,105 @@ def webhook():
 
     update = request.get_json(silent=True) or {}
 
-    # Automatically approve a join request
+    # Handle join requests
     join_request = update.get("chat_join_request")
 
     if join_request:
         chat_id = join_request["chat"]["id"]
         user_id = join_request["from"]["id"]
 
+        redis.incr("total_requests")
+
         try:
             telegram("approveChatJoinRequest", {
                 "chat_id": chat_id,
                 "user_id": user_id
             })
-            logging.info(
-                "Approved user %s in chat %s",
-                user_id, chat_id
-            )
+            redis.incr("total_approved")
+            logging.info("Approved user %s", user_id)
+
         except Exception:
-            logging.exception("Could not approve join request")
+            redis.incr("total_errors")
+            logging.exception("Approval failed")
             return jsonify({"error": "Approval failed"}), 500
 
-    # Respond to /start in private chat
+    # Handle private messages and commands
     message = update.get("message", {})
     chat = message.get("chat", {})
 
     if chat.get("type") == "private":
-        text = message.get("text", "")
+        user_id = chat["id"]
+        text = message.get("text", "").strip()
 
         if text.startswith("/start"):
+            redis.sadd("bot_users", str(user_id))
+
             send_message(
-                chat["id"],
-                "Welcome! I automatically approve Telegram "
-                "join requests in groups and channels where "
-                "I am an administrator.\n\n"
-                "To use me:\n"
-                "1. Add me to your group or channel.\n"
-                "2. Make me an administrator.\n"
-                "3. Enable the Invite Users permission.\n"
-                "4. Turn on join requests for your invite link.\n\n"
+                user_id,
+                "Welcome to ReqFlowAcceptBot! 🤖\n\n"
+                "I automatically approve Telegram join requests.\n\n"
+                "1. Add me as an administrator.\n"
+                "2. Enable Invite Users permission.\n"
+                "3. Enable join requests on your invite link.\n\n"
                 "Use /help for instructions."
             )
 
         elif text.startswith("/help"):
             send_message(
-                chat["id"],
-                "Add this bot as an administrator and grant "
-                "Invite Users permission. Enable join requests "
-                "on your invite link. Requests will then be "
-                "automatically approved."
+                user_id,
+                "Add me as an administrator and enable "
+                "Invite Users permission. Turn on join requests "
+                "for your invite link."
             )
+
+        elif user_id == ADMIN_ID and text == "/stats":
+            users = redis.scard("bot_users")
+            requests_count = redis.get("total_requests") or 0
+            approved = redis.get("total_approved") or 0
+            errors = redis.get("total_errors") or 0
+
+            send_message(
+                user_id,
+                "📊 ReqFlowAcceptBot Stats\n\n"
+                f"👥 Bot users: {users}\n"
+                f"📩 Join requests: {requests_count}\n"
+                f"✅ Approved: {approved}\n"
+                f"❌ Errors: {errors}"
+            )
+
+        elif user_id == ADMIN_ID and text.startswith("/broadcast"):
+            broadcast_text = text.partition(" ")[2].strip()
+
+            if not broadcast_text:
+                send_message(
+                    user_id,
+                    "Use this format:\n/broadcast Your message"
+                )
+            else:
+                users = redis.smembers("bot_users")
+                sent = 0
+                failed = 0
+
+                for recipient in users:
+                    try:
+                        send_message(int(recipient), broadcast_text)
+                        sent += 1
+                    except Exception:
+                        failed += 1
+                        logging.exception(
+                            "Broadcast failed for user %s", recipient
+                        )
+
+                send_message(
+                    user_id,
+                    f"📢 Broadcast finished!\n\n"
+                    f"✅ Sent: {sent}\n"
+                    f"❌ Failed: {failed}"
+                )
 
     return jsonify({"ok": True})
 
 
-# Register the Telegram webhook when the app starts
 def setup_webhook():
     telegram("setWebhook", {
         "url": PUBLIC_URL + WEBHOOK_PATH,
