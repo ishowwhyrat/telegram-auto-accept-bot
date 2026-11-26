@@ -65,11 +65,23 @@ def webhook():
 
         try:
             telegram("approveChatJoinRequest", {
-                "chat_id": chat_id,
-                "user_id": user_id
-            })
-            redis.incr("total_approved")
-            logging.info("Approved user %s", user_id)
+    "chat_id": chat_id,
+    "user_id": user_id
+})
+
+redis.incr("total_approved")
+logging.info("Approved user %s", user_id)
+
+channel_name = join_request["chat"].get("title", "our channel/group")
+
+try:
+    send_message(
+        user_id,
+        f"I have successfully approved your request to join {channel_name}. 🎉\n\n"
+        "Welcome! Thank you for joining."
+    )
+except Exception:
+    logging.exception("Could not send approval DM to user %s", user_id)
 
         except Exception as e:
             error = str(e)
