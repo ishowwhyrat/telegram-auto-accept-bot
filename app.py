@@ -1,5 +1,6 @@
 import os
 import logging
+import requests
 from flask import Flask, request, jsonify
 from upstash_redis import Redis
 
@@ -18,17 +19,18 @@ redis = Redis.from_env()
 
 
 def telegram(method, data=None):
-    import requests
-
     response = requests.post(
         f"{API}/{method}",
         json=data or {},
         timeout=20
     )
+
     result = response.json()
 
     if not response.ok or not result.get("ok"):
-        raise RuntimeError(result.get("description", "Telegram API error"))
+        raise RuntimeError(
+            result.get("description", "Telegram API error")
+        )
 
     return result.get("result")
 
@@ -47,6 +49,7 @@ def home():
 
 @app.post(WEBHOOK_PATH)
 def webhook():
+
     if request.headers.get(
         "X-Telegram-Bot-Api-Secret-Token"
     ) != WEBHOOK_SECRET:
@@ -58,51 +61,90 @@ def webhook():
     join_request = update.get("chat_join_request")
 
     if join_request:
+
         chat_id = join_request["chat"]["id"]
         user_id = join_request["from"]["id"]
+        user_chat_id = join_request.get("user_chat_id")
+
+        channel_name = join_request["chat"].get(
+            "title", "our channel/group"
+        )
 
         redis.incr("total_requests")
 
+        # STEP 1: Attempt DM before approval
+        if user_chat_id:
+
+            try:
+                send_message(
+                    user_chat_id,
+                    f"I have successfully approved your request "
+                    f"to join {channel_name}. 🎉\n\n"
+                    "Welcome! Thank you for joining."
+                )
+
+                logging.info(
+                    "Approval DM sent to user %s", user_id
+                )
+
+            except Exception:
+                logging.exception(
+                    "Approval DM failed for user %s", user_id
+                )
+
+        else:
+            logging.warning(
+                "No user_chat_id available for user %s", user_id
+            )
+
+        # STEP 2: Approve join request
         try:
+
             telegram("approveChatJoinRequest", {
-    "chat_id": chat_id,
-    "user_id": user_id
-})
+                "chat_id": chat_id,
+                "user_id": user_id
+            })
 
-redis.incr("total_approved")
-logging.info("Approved user %s", user_id)
+            redis.incr("total_approved")
 
-channel_name = join_request["chat"].get("title", "our channel/group")
-
-try:
-    send_message(
-        user_id,
-        f"I have successfully approved your request to join {channel_name}. 🎉\n\n"
-        "Welcome! Thank you for joining."
-    )
-except Exception:
-    logging.exception("Could not send approval DM to user %s", user_id)
+            logging.info(
+                "Successfully approved user %s", user_id
+            )
 
         except Exception as e:
+
             error = str(e)
 
             if "USER_ALREADY_PARTICIPANT" in error:
-                logging.info("User %s is already a participant", user_id)
-                return jsonify({"ok": True, "already_member": True}), 200
+
+                logging.info(
+                    "User %s is already a participant", user_id
+                )
+
+                return jsonify({
+                    "ok": True,
+                    "already_member": True
+                }), 200
 
             redis.incr("total_errors")
+
             logging.exception("Approval failed")
-            return jsonify({"error": "Approval failed"}), 500
+
+            return jsonify({
+                "error": "Approval failed"
+            }), 500
 
     # Handle private messages and commands
     message = update.get("message", {})
     chat = message.get("chat", {})
 
     if chat.get("type") == "private":
+
         user_id = chat["id"]
         text = message.get("text", "").strip()
 
         if text.startswith("/start"):
+
             redis.sadd("bot_users", str(user_id))
 
             send_message(
@@ -116,6 +158,7 @@ except Exception:
             )
 
         elif text.startswith("/help"):
+
             send_message(
                 user_id,
                 "Add me as an administrator and enable "
@@ -124,6 +167,7 @@ except Exception:
             )
 
         elif user_id == ADMIN_ID and text == "/stats":
+
             users = redis.scard("bot_users")
             requests_count = redis.get("total_requests") or 0
             approved = redis.get("total_approved") or 0
@@ -139,26 +183,38 @@ except Exception:
             )
 
         elif user_id == ADMIN_ID and text.startswith("/broadcast"):
+
             broadcast_text = text.partition(" ")[2].strip()
 
             if not broadcast_text:
+
                 send_message(
                     user_id,
                     "Use this format:\n/broadcast Your message"
                 )
+
             else:
+
                 users = redis.smembers("bot_users")
+
                 sent = 0
                 failed = 0
 
                 for recipient in users:
+
                     try:
-                        send_message(int(recipient), broadcast_text)
+                        send_message(
+                            int(recipient),
+                            broadcast_text
+                        )
                         sent += 1
+
                     except Exception:
                         failed += 1
+
                         logging.exception(
-                            "Broadcast failed for user %s", recipient
+                            "Broadcast failed for user %s",
+                            recipient
                         )
 
                 send_message(
@@ -172,10 +228,14 @@ except Exception:
 
 
 def setup_webhook():
+
     telegram("setWebhook", {
         "url": PUBLIC_URL + WEBHOOK_PATH,
         "secret_token": WEBHOOK_SECRET,
-        "allowed_updates": ["message", "chat_join_request"]
+        "allowed_updates": [
+            "message",
+            "chat_join_request"
+        ]
     })
 
 
@@ -183,6 +243,7 @@ setup_webhook()
 
 
 if __name__ == "__main__":
+
     app.run(
         host="0.0.0.0",
         port=int(os.environ.get("PORT", 10000))
