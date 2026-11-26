@@ -71,7 +71,13 @@ def webhook():
             redis.incr("total_approved")
             logging.info("Approved user %s", user_id)
 
-        except Exception:
+        except Exception as e:
+            error = str(e)
+
+            if "USER_ALREADY_PARTICIPANT" in error:
+                logging.info("User %s is already a participant", user_id)
+                return jsonify({"ok": True, "already_member": True}), 200
+
             redis.incr("total_errors")
             logging.exception("Approval failed")
             return jsonify({"error": "Approval failed"}), 500
